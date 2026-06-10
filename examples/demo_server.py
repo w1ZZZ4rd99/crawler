@@ -1,13 +1,17 @@
 """Local demo site used by demos and tests.
 
 Layout: / -> /section/{s} -> /section/{s}/item/{i} (depth 2), plus one
-external link and a robots-disallowed /private/ area linked from the index.
+external link, a robots-disallowed /private/ area and failure endpoints
+(/flaky, /error/500, /hang) for retry demos.
 Standalone: python -m examples.demo_server
 """
 
 import asyncio
+from collections import defaultdict
 
 from aiohttp import web
+
+HITS_KEY = web.AppKey("hits", dict)
 
 PAGE = """<html>
 <head><title>{title}</title><meta name="description" content="{title}"></head>
@@ -24,6 +28,12 @@ PRIVATE_LINK = "/private/secret"
 def _render(title: str, links: list[str]) -> str:
     anchors = "\n".join(f'<a href="{href}">{href}</a>' for href in links)
     return PAGE.format(title=title, links=anchors)
+
+
+@web.middleware
+async def _count_hits(request: web.Request, handler):
+    request.app[HITS_KEY][request.path] += 1
+    return await handler(request)
 
 
 def create_app(
@@ -62,12 +72,29 @@ def create_app(
         links = [f"/section/{s}", "/"]
         return web.Response(text=_render(f"Item {s}-{i}", links), content_type="text/html")
 
-    app = web.Application()
+    async def flaky(request: web.Request) -> web.Response:
+        # The first two hits fail with 503, then the page recovers.
+        if request.app[HITS_KEY][request.path] <= 2:
+            return web.Response(status=503, text="temporarily unavailable")
+        return web.Response(text=_render("Flaky page", ["/"]), content_type="text/html")
+
+    async def always_error(request: web.Request) -> web.Response:
+        return web.Response(status=int(request.match_info["code"]), text="server error")
+
+    async def hang(request: web.Request) -> web.Response:
+        await asyncio.sleep(60)
+        return web.Response(text="finally awake")
+
+    app = web.Application(middlewares=[_count_hits])
+    app[HITS_KEY] = defaultdict(int)
     app.router.add_get("/", index)
     app.router.add_get("/robots.txt", robots_txt)
     app.router.add_get("/private/{name}", private_page)
     app.router.add_get("/section/{s}", section)
     app.router.add_get("/section/{s}/item/{i}", item)
+    app.router.add_get("/flaky", flaky)
+    app.router.add_get("/error/{code}", always_error)
+    app.router.add_get("/hang", hang)
     return app
 
 

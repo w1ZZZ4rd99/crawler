@@ -5,6 +5,7 @@ from aiohttp.test_utils import TestServer
 
 from examples.demo_server import EXTERNAL_LINK, create_app
 from src.crawler import AsyncCrawler
+from src.resilience.retry import RetryStrategy
 
 # create_app(sections=2, items=2): 1 index + 2 sections + 4 items = 7 pages.
 SITE_PAGES = 7
@@ -66,7 +67,8 @@ async def test_crawl_exclude_patterns(site):
 
 
 async def test_crawl_follows_external_links_when_allowed(site):
-    async with make_crawler() as crawler:
+    # No retries: the external host is unreachable, retrying only slows the test.
+    async with make_crawler(retry_strategy=RetryStrategy(max_retries=0)) as crawler:
         await crawler.crawl(
             [str(site.make_url("/"))], max_pages=50, max_depth=1, same_domain_only=False
         )

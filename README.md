@@ -10,6 +10,8 @@
   фильтрация URL, прогресс в реальном времени (день 3)
 - правила вежливости: rate limiting по доменам, robots.txt, Crawl-delay,
   настраиваемый User-Agent (день 4)
+- устойчивость: классификация ошибок, автоматические повторы с экспоненциальным
+  backoff, circuit breaker по доменам (день 5)
 
 ## Установка
 
@@ -35,6 +37,9 @@ python -m examples.demo_crawl --url https://example.com --max-pages 10
 
 # День 4: rate limiting и соблюдение robots.txt
 python -m examples.demo_politeness
+
+# День 5: повторы при ошибках и отчёт об ошибках
+python -m examples.demo_retries
 ```
 
 ## Тесты и линт
@@ -59,6 +64,10 @@ ruff check src tests examples
 │   ├── politeness/
 │   │   ├── rate_limiter.py # ограничение частоты запросов
 │   │   └── robots.py       # загрузка и проверка robots.txt
+│   ├── resilience/
+│   │   ├── errors.py          # иерархия и классификация ошибок
+│   │   ├── retry.py           # повторы с экспоненциальным backoff
+│   │   └── circuit_breaker.py # отключение «больных» доменов
 │   └── scheduling/
 │       ├── crawler_queue.py # очередь URL с приоритетами и дедупликацией
 │       ├── semaphores.py    # глобальный и по-доменный лимиты конкурентности
@@ -68,7 +77,8 @@ ruff check src tests examples
 │   ├── demo_fetch.py      # демо дня 1
 │   ├── demo_parsing.py    # демо дня 2
 │   ├── demo_crawl.py      # демо дня 3
-│   └── demo_politeness.py # демо дня 4
+│   ├── demo_politeness.py # демо дня 4
+│   └── demo_retries.py    # демо дня 5
 ├── tests/
 │   ├── conftest.py        # локальный тестовый HTTP-сервер
 │   ├── test_crawler.py
@@ -77,7 +87,10 @@ ruff check src tests examples
 │   ├── test_url_filter.py
 │   ├── test_crawl.py
 │   ├── test_rate_limiter.py
-│   └── test_robots.py
+│   ├── test_robots.py
+│   ├── test_errors.py
+│   ├── test_retry.py
+│   └── test_circuit_breaker.py
 ├── requirements.txt
 ├── pytest.ini
 └── ruff.toml
@@ -128,3 +141,17 @@ ruff check src tests examples
   Crawl-delay из robots.txt усиливает лимит, запрещённые URL пропускаются
   и учитываются отдельно (`robots_blocked`), настраиваемый User-Agent
 - мониторинг: текущий req/s, средняя задержка, количество блокировок
+
+### День 5 — обработка ошибок и автоматические повторы ✅
+
+- иерархия ошибок: `TransientError` (таймауты, 429/5xx), `PermanentError`
+  (404/403/...), `NetworkError` (DNS, connection refused), `ParseError`
+- `RetryStrategy.execute_with_retry`: экспоненциальный backoff с jitter,
+  уважение `Retry-After` (429), повторы только для retryable-ошибок,
+  увеличение таймаутов на каждой попытке
+- `CircuitBreaker`: после N подряд ошибок домен временно отключается
+  (closed → open → half-open), пробный запрос после паузы
+- `fetch_url` теперь работает поверх `_request_page`, который бросает
+  классифицированные ошибки; публичное поведение прежнее (None при ошибке)
+- статистика: ошибки по типам, число повторов, успешные повторы;
+  отчёт об ошибках в `data/error_report.json` (демо)
