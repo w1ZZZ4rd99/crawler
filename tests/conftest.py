@@ -35,10 +35,20 @@ def create_test_app() -> web.Application:
         await asyncio.sleep(float(request.query.get("d", "0.5")))
         return web.Response(text="slow page")
 
+    async def html_page(request: web.Request) -> web.Response:
+        body = (
+            "<html><head><title>Test page</title>"
+            '<meta name="description" content="demo page"></head>'
+            '<body><h1>Hello</h1><a href="/ok">ok</a>'
+            '<a href="relative/path">rel</a></body></html>'
+        )
+        return web.Response(text=body, content_type="text/html")
+
     app = web.Application(middlewares=[_track_requests])
     app[STATS_KEY] = {"hits": defaultdict(int), "active": 0, "max_active": 0}
     app.router.add_get("/ok", ok)
     app.router.add_get("/slow", slow)
+    app.router.add_get("/html", html_page)
     return app
 
 

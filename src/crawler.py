@@ -6,6 +6,8 @@ import time
 import aiohttp
 from loguru import logger
 
+from src.parsing.html_parser import HTMLParser
+
 
 class AsyncCrawler:
     """Downloads web pages concurrently with a configurable concurrency limit."""
@@ -16,8 +18,10 @@ class AsyncCrawler:
         timeout_total: float = 30.0,
         timeout_connect: float = 10.0,
         timeout_read: float = 10.0,
+        parser: HTMLParser | None = None,
     ) -> None:
         self.max_concurrent = max_concurrent
+        self.parser = parser or HTMLParser()
         self._timeout = aiohttp.ClientTimeout(
             total=timeout_total, connect=timeout_connect, sock_read=timeout_read
         )
@@ -61,6 +65,13 @@ class AsyncCrawler:
         fetched = {url: text for url, text in zip(urls, results) if text is not None}
         logger.info("Fetched {}/{} urls", len(fetched), len(urls))
         return fetched
+
+    async def fetch_and_parse(self, url: str) -> dict | None:
+        """Download a page and return structured data extracted from its HTML."""
+        html = await self.fetch_url(url)
+        if html is None:
+            return None
+        return await self.parser.parse_html(html, url)
 
     async def close(self) -> None:
         """Release the HTTP session and its connection pool."""

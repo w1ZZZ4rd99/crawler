@@ -5,6 +5,7 @@
 ## Возможности (по мере разработки)
 
 - параллельная загрузка страниц с ограничением конкурентности (день 1)
+- парсинг HTML: ссылки, текст, метаданные, картинки, заголовки, таблицы, списки (день 2)
 
 ## Установка
 
@@ -19,6 +20,9 @@ pip install -r requirements.txt
 ```bash
 # День 1: параллельная против последовательной загрузки
 python -m examples.demo_fetch
+
+# День 2: загрузка и извлечение структурированных данных
+python -m examples.demo_parsing
 ```
 
 ## Тесты и линт
@@ -36,12 +40,17 @@ ruff check src tests examples
 ```
 ├── src/
 │   ├── crawler.py         # AsyncCrawler — ядро краулера
-│   └── logging_setup.py   # настройка loguru
+│   ├── models.py          # PageData — модель данных страницы
+│   ├── logging_setup.py   # настройка loguru
+│   └── parsing/
+│       └── html_parser.py # HTMLParser — извлечение данных из HTML
 ├── examples/
-│   └── demo_fetch.py      # демо дня 1
+│   ├── demo_fetch.py      # демо дня 1
+│   └── demo_parsing.py    # демо дня 2
 ├── tests/
 │   ├── conftest.py        # локальный тестовый HTTP-сервер
-│   └── test_crawler.py
+│   ├── test_crawler.py
+│   └── test_html_parser.py
 ├── requirements.txt
 ├── pytest.ini
 └── ruff.toml
@@ -58,3 +67,14 @@ ruff check src tests examples
 - обработка ошибок: HTTP-статусы, таймауты, сетевые ошибки — без падения
 - логирование старта/успеха/ошибок каждого запроса (loguru)
 - демо: 8 URL параллельно и последовательно, замер ускорения
+
+### День 2 — парсинг HTML и извлечение данных ✅
+
+- `HTMLParser`: `parse_html` (в отдельном потоке через `asyncio.to_thread`),
+  `extract_links`, `extract_text`, `extract_metadata`
+- извлечение картинок (src/alt), заголовков h1–h3, таблиц и списков
+- относительные ссылки конвертируются в абсолютные (`urljoin`),
+  отбрасываются fragment/`mailto:`/`javascript:`, дедупликация
+- модель `PageData` (`src/models.py`)
+- `AsyncCrawler.fetch_and_parse(url)` — загрузка + парсинг одним вызовом
+- ошибки парсинга не роняют программу: частичный результат + warning в логе

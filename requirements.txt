@@ -1,6 +1,8 @@
 aiohttp>=3.11
 aiofiles>=24.1
 loguru>=0.7
+beautifulsoup4>=4.12
+lxml>=5.3
 
 # dev / tests
 pytest>=8.3
