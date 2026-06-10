@@ -266,14 +266,23 @@ class AsyncCrawler:
                 elapsed = time.perf_counter() - started
                 rate = stats["processed"] / elapsed if elapsed > 0 else 0.0
                 limiter = self.rate_limiter.get_stats()
+                done = stats["processed"] + stats["failed"]
+                # The real total is unknown upfront: estimate against the
+                # page budget or against everything discovered so far.
+                expected = min(max_pages, done + stats["queued"] + stats["in_progress"])
+                percent = done / expected * 100 if expected else 100.0
+                eta = (expected - done) / rate if rate > 0 else 0.0
                 logger.info(
-                    "Progress: {} processed, {} queued, {} active, {} failed, "
-                    "{:.1f} pages/s, {:.2f} req/s, avg delay {:.2f}s, {} blocked",
-                    stats["processed"],
+                    "Progress: {:.0f}% ({}/{}), {} queued, {} active, {} failed, "
+                    "{:.1f} pages/s, ETA {:.0f}s, {:.2f} req/s, avg delay {:.2f}s, {} blocked",
+                    percent,
+                    done,
+                    expected,
                     stats["queued"],
                     stats["in_progress"],
                     stats["failed"],
                     rate,
+                    eta,
                     limiter["current_rps"],
                     limiter["avg_wait"],
                     len(self.robots_blocked),

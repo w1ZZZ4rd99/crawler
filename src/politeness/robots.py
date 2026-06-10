@@ -71,3 +71,10 @@ class RobotsParser:
             return None
         delay = parser.crawl_delay(user_agent or self.user_agent)
         return float(delay) if delay is not None else None
+
+    def get_sitemaps(self, url: str) -> list[str]:
+        """Sitemap URLs advertised by the domain's robots.txt."""
+        parser = self._parsers.get(self._origin(url))
+        if parser is None:
+            return []
+        return list(parser.site_maps() or [])

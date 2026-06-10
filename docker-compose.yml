@@ -1,0 +1,32 @@
+# Самодостаточная демонстрация: поднимает локальный демо-сайт
+# и краулер, который его обходит. Результаты — в ./data, логи — в ./logs.
+#   docker compose up --build
+#
+# База — SQLite (встраиваемая, серверного процесса нет, поэтому отдельный
+# сервис для неё не нужен): краулер пишет в файл ./data/results.db.
+# Посмотреть данные:
+#   sqlite3 data/results.db 'SELECT url, title, status_code FROM pages LIMIT 5;'
+
+services:
+  demo-site:
+    build: .
+    command: python -m examples.demo_server
+    ports:
+      - "8080:8080"
+
+  crawler:
+    build: .
+    depends_on:
+      - demo-site
+    command: >
+      python crawler.py
+      --urls http://demo-site:8080/
+      --max-pages 50
+      --rate-limit 5
+      --output data/results.db
+      --report data/report.html
+      --stats-json data/stats.json
+      --log-file logs/crawler.log
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs

@@ -4,6 +4,7 @@ loguru>=0.7
 beautifulsoup4>=4.12
 lxml>=5.3
 aiosqlite>=0.20
+PyYAML>=6.0
 
 # dev / tests
 pytest>=8.3

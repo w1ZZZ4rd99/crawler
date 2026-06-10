@@ -1,0 +1,36 @@
+# Пример конфигурации краулера. Скопируйте в config.yaml и отредактируйте.
+# Запуск: python crawler.py --config config.yaml
+
+# Область обхода
+start_urls:
+  - https://example.com
+max_pages: 50
+max_depth: 2
+same_domain_only: true
+include_patterns: []        # regex; пусто = без ограничений
+exclude_patterns:
+  - '\.pdf$'
+use_sitemap: false          # брать стартовые URL из sitemap.xml
+
+# Конкурентность и вежливость
+max_concurrent: 10
+per_domain_limit: 3
+requests_per_second: 2.0    # null = без лимита
+min_delay: 0.1
+jitter: 0.05
+respect_robots: true
+user_agent: AsyncCrawler/1.0 (educational project)
+
+# Таймауты и повторы
+timeout_total: 30.0
+max_retries: 3
+backoff_factor: 2.0
+
+# Куда сохранять; формат по расширению: .db/.sqlite (SQLite), .jsonl, .json, .csv
+output: data/results.db
+report_html: data/report.html
+stats_json: data/stats.json
+
+# Логирование
+log_level: INFO
+log_file: logs/crawler.log

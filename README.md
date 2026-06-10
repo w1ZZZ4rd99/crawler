@@ -1,19 +1,23 @@
 # Асинхронный веб-краулер
 
-Веб-краулер для парсинга сайтов на Python (asyncio + aiohttp).
+Веб-краулер для парсинга сайтов на Python (asyncio + aiohttp): параллельный
+обход страниц, извлечение данных из HTML, соблюдение правил вежливости,
+устойчивость к ошибкам и сохранение результатов в файлы и базу данных.
 
-## Возможности (по мере разработки)
+## Возможности
 
-- параллельная загрузка страниц с ограничением конкурентности (день 1)
-- парсинг HTML: ссылки, текст, метаданные, картинки, заголовки, таблицы, списки (день 2)
+- параллельная загрузка страниц с ограничением конкурентности (глобально и по доменам)
+- парсинг HTML: ссылки, текст, метаданные, картинки, заголовки, таблицы, списки
 - обход сайта: очередь с приоритетами, ограничение глубины и числа страниц,
-  фильтрация URL, прогресс в реальном времени (день 3)
+  фильтрация URL, прогресс с процентами и ETA в реальном времени
 - правила вежливости: rate limiting по доменам, robots.txt, Crawl-delay,
-  настраиваемый User-Agent (день 4)
-- устойчивость: классификация ошибок, автоматические повторы с экспоненциальным
-  backoff, circuit breaker по доменам (день 5)
-- асинхронное сохранение результатов: JSON Lines, CSV, SQLite,
-  несколько хранилищ одновременно (день 6)
+  настраиваемый User-Agent
+- устойчивость: классификация ошибок, повторы с экспоненциальным backoff,
+  circuit breaker по доменам
+- сохранение: JSON Lines, JSON, CSV, SQLite — в одно или несколько хранилищ сразу
+- sitemap.xml (включая sitemap index) как источник стартовых URL
+- статистика и отчёты: JSON и автономный HTML-отчёт
+- конфигурация через YAML/JSON + CLI, логирование в файл с ротацией, Docker
 
 ## Установка
 
@@ -23,90 +27,113 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## Запуск демо
+## Быстрый старт (CLI)
 
 ```bash
-# День 1: параллельная против последовательной загрузки
-python -m examples.demo_fetch
+# результаты — в SQLite (data/results.db) + HTML-отчёт
+python crawler.py --urls https://example.com --max-pages 30 \
+    --output data/results.db --report data/report.html
 
-# День 2: загрузка и извлечение структурированных данных
-python -m examples.demo_parsing
+# посмотреть сохранённое
+sqlite3 data/results.db 'SELECT url, title, status_code FROM pages LIMIT 5;'
 
-# День 3: обход локального демо-сайта с прогрессом
-python -m examples.demo_crawl
-# или обход реального сайта:
-python -m examples.demo_crawl --url https://example.com --max-pages 10
-
-# День 4: rate limiting и соблюдение robots.txt
-python -m examples.demo_politeness
-
-# День 5: повторы при ошибках и отчёт об ошибках
-python -m examples.demo_retries
-
-# День 6: сохранение в JSONL + CSV + SQLite и чтение назад
-python -m examples.demo_storage
+# или всё через конфиг (пример: config.example.yaml)
+cp config.example.yaml config.yaml
+python crawler.py --config config.yaml
 ```
+
+Формат результата определяется расширением `--output`:
+`.db`/`.sqlite` (SQLite, по умолчанию), `.jsonl` (построчно),
+`.json` (форматированный массив), `.csv`.
+Все параметры — в [docs/configuration.md](docs/configuration.md).
+
+## Запуск в Docker
+
+```bash
+docker compose up --build
+```
+
+Поднимает локальный демо-сайт и краулер, который его обходит; результаты
+появляются в `./data`: база SQLite `results.db`, `report.html`, `stats.json`,
+логи — в `./logs`. Отдельный сервис для базы не нужен: SQLite — встраиваемая
+БД без серверного процесса, краулер пишет в файл через aiosqlite.
+
+## Использование как библиотеки
+
+```python
+import asyncio
+
+from src.advanced_crawler import AdvancedCrawler
+
+async def main():
+    crawler = AdvancedCrawler.from_config("config.yaml")
+    await crawler.crawl()
+
+    stats = crawler.get_stats()
+    print(f"Обработано: {stats['total_pages']} страниц")
+    print(f"Успешно: {stats['successful']}, ошибок: {stats['failed']}")
+
+    crawler.export_to_html_report("data/report.html")
+    await crawler.close()
+
+asyncio.run(main())
+```
+
+Низкоуровневый API (`AsyncCrawler`: `fetch_url`, `fetch_urls`,
+`fetch_and_parse`, `crawl`) — см. [docs/architecture.md](docs/architecture.md).
+
+## Демо по дням
+
+```bash
+python -m examples.demo_fetch       # день 1: параллельная загрузка vs последовательная
+python -m examples.demo_parsing     # день 2: извлечение данных из HTML
+python -m examples.demo_crawl       # день 3: обход сайта с прогрессом
+python -m examples.demo_politeness  # день 4: rate limiting и robots.txt
+python -m examples.demo_retries     # день 5: повторы и отчёт об ошибках
+python -m examples.demo_storage     # день 6: JSONL + CSV + SQLite
+python -m scripts.benchmark         # день 7: производительность и память
+```
+
+Демо работают против локального демо-сайта (`examples/demo_server.py`) —
+интернет не нужен.
 
 ## Тесты и линт
 
 ```bash
 pytest -q
-ruff check src tests examples
+ruff check src tests examples scripts
 ```
 
-Тесты не ходят во внешнюю сеть: используется локальный aiohttp-сервер
-(`tests/conftest.py`).
+Тесты (100+) не ходят во внешнюю сеть: все сценарии — против локальных
+aiohttp-серверов, включая флаки-страницы, robots.txt и sitemap.
 
 ## Структура проекта
 
 ```
+├── crawler.py             # точка входа CLI
+├── config.example.yaml    # пример конфигурации
+├── Dockerfile / docker-compose.yml
 ├── src/
 │   ├── crawler.py         # AsyncCrawler — ядро краулера
-│   ├── models.py          # PageData — модель данных страницы
-│   ├── logging_setup.py   # настройка loguru
-│   ├── parsing/
-│   │   └── html_parser.py # HTMLParser — извлечение данных из HTML
-│   ├── politeness/
-│   │   ├── rate_limiter.py # ограничение частоты запросов
-│   │   └── robots.py       # загрузка и проверка robots.txt
-│   ├── resilience/
-│   │   ├── errors.py          # иерархия и классификация ошибок
-│   │   ├── retry.py           # повторы с экспоненциальным backoff
-│   │   └── circuit_breaker.py # отключение «больных» доменов
-│   ├── storage/
-│   │   ├── base.py            # DataStorage — абстрактный интерфейс
-│   │   ├── json_storage.py    # JSON Lines / форматированный JSON
-│   │   ├── csv_storage.py     # CSV с автоопределением заголовков
-│   │   └── sqlite_storage.py  # SQLite с batch-вставками (aiosqlite)
-│   └── scheduling/
-│       ├── crawler_queue.py # очередь URL с приоритетами и дедупликацией
-│       ├── semaphores.py    # глобальный и по-доменный лимиты конкурентности
-│       └── url_filter.py    # фильтрация URL (домен, include/exclude)
-├── examples/
-│   ├── demo_server.py     # локальный демо-сайт (robots.txt, /private)
-│   ├── demo_fetch.py      # демо дня 1
-│   ├── demo_parsing.py    # демо дня 2
-│   ├── demo_crawl.py      # демо дня 3
-│   ├── demo_politeness.py # демо дня 4
-│   ├── demo_retries.py    # демо дня 5
-│   └── demo_storage.py    # демо дня 6
-├── tests/
-│   ├── conftest.py        # локальный тестовый HTTP-сервер
-│   ├── test_crawler.py
-│   ├── test_html_parser.py
-│   ├── test_queue.py
-│   ├── test_url_filter.py
-│   ├── test_crawl.py
-│   ├── test_rate_limiter.py
-│   ├── test_robots.py
-│   ├── test_errors.py
-│   ├── test_retry.py
-│   ├── test_circuit_breaker.py
-│   └── test_storage.py
-├── requirements.txt
-├── pytest.ini
-└── ruff.toml
+│   ├── advanced_crawler.py# AdvancedCrawler — конфиг + статистика + sitemap
+│   ├── cli.py             # argparse-интерфейс
+│   ├── config.py          # CrawlerConfig (YAML/JSON + CLI)
+│   ├── stats.py           # CrawlerStats + JSON/HTML отчёты
+│   ├── models.py          # PageData, FetchResult
+│   ├── logging_setup.py   # loguru: консоль + файл с ротацией
+│   ├── parsing/           # html_parser.py, sitemap.py
+│   ├── scheduling/        # crawler_queue.py, semaphores.py, url_filter.py
+│   ├── politeness/        # rate_limiter.py, robots.py
+│   ├── resilience/        # errors.py, retry.py, circuit_breaker.py
+│   └── storage/           # base.py, json/csv/sqlite_storage.py
+├── examples/              # демо-скрипты + локальный демо-сайт
+├── scripts/benchmark.py   # замер производительности
+├── tests/                 # pytest + pytest-asyncio, локальные серверы
+└── docs/                  # architecture.md, configuration.md
 ```
+
+Подробное описание архитектуры и потока данных — в
+[docs/architecture.md](docs/architecture.md).
 
 ## Прогресс по дням
 
@@ -181,3 +208,18 @@ ruff check src tests examples
   status_code, content_type (`PageData`)
 - интеграция: `AsyncCrawler(storage=...)` сохраняет каждую обработанную
   страницу; ошибки записи ретраятся и логируются, краул не падает
+
+### День 7 — продвинутые возможности и интеграция ✅
+
+- `SitemapParser`: обычные sitemap и sitemap index (рекурсивно, с лимитом
+  глубины), обнаружение sitemap через robots.txt, `use_sitemap` сидирует очередь
+- `CrawlerStats`: успешные/неудачные, скорость, распределение статус-кодов,
+  топ доменов, ошибки по типам, повторы; экспорт в JSON и автономный HTML-отчёт
+- `CrawlerConfig`: YAML/JSON конфиг + переопределение флагами CLI
+- CLI (`python crawler.py --urls ... --max-pages ... --output ...`)
+- `AdvancedCrawler` — фасад, собирающий все компоненты
+- логирование в файл с ротацией и сжатием (loguru)
+- прогресс: проценты, ETA, скорость, активные задачи
+- Docker + docker-compose (демо-сайт + краулер из коробки)
+- `scripts/benchmark.py`: последовательный против асинхронного режим,
+  100/500 страниц, пиковая память (tracemalloc)

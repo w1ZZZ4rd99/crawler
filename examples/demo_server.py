@@ -50,7 +50,20 @@ def create_app(
         lines = ["User-agent: *", "Disallow: /private/"]
         if robots_crawl_delay is not None:
             lines.append(f"Crawl-delay: {robots_crawl_delay}")
+        lines.append(f"Sitemap: {request.scheme}://{request.host}/sitemap.xml")
         return web.Response(text="\n".join(lines) + "\n")
+
+    async def sitemap_xml(request: web.Request) -> web.Response:
+        base = f"{request.scheme}://{request.host}"
+        entries = "".join(
+            f"<url><loc>{base}/section/{s}</loc></url>" for s in range(sections)
+        )
+        body = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+            f"{entries}</urlset>"
+        )
+        return web.Response(text=body, content_type="application/xml")
 
     async def private_page(request: web.Request) -> web.Response:
         return web.Response(text=_render("Private page", ["/"]), content_type="text/html")
@@ -89,6 +102,7 @@ def create_app(
     app[HITS_KEY] = defaultdict(int)
     app.router.add_get("/", index)
     app.router.add_get("/robots.txt", robots_txt)
+    app.router.add_get("/sitemap.xml", sitemap_xml)
     app.router.add_get("/private/{name}", private_page)
     app.router.add_get("/section/{s}", section)
     app.router.add_get("/section/{s}/item/{i}", item)
