@@ -12,6 +12,8 @@
   настраиваемый User-Agent (день 4)
 - устойчивость: классификация ошибок, автоматические повторы с экспоненциальным
   backoff, circuit breaker по доменам (день 5)
+- асинхронное сохранение результатов: JSON Lines, CSV, SQLite,
+  несколько хранилищ одновременно (день 6)
 
 ## Установка
 
@@ -40,6 +42,9 @@ python -m examples.demo_politeness
 
 # День 5: повторы при ошибках и отчёт об ошибках
 python -m examples.demo_retries
+
+# День 6: сохранение в JSONL + CSV + SQLite и чтение назад
+python -m examples.demo_storage
 ```
 
 ## Тесты и линт
@@ -68,6 +73,11 @@ ruff check src tests examples
 │   │   ├── errors.py          # иерархия и классификация ошибок
 │   │   ├── retry.py           # повторы с экспоненциальным backoff
 │   │   └── circuit_breaker.py # отключение «больных» доменов
+│   ├── storage/
+│   │   ├── base.py            # DataStorage — абстрактный интерфейс
+│   │   ├── json_storage.py    # JSON Lines / форматированный JSON
+│   │   ├── csv_storage.py     # CSV с автоопределением заголовков
+│   │   └── sqlite_storage.py  # SQLite с batch-вставками (aiosqlite)
 │   └── scheduling/
 │       ├── crawler_queue.py # очередь URL с приоритетами и дедупликацией
 │       ├── semaphores.py    # глобальный и по-доменный лимиты конкурентности
@@ -78,7 +88,8 @@ ruff check src tests examples
 │   ├── demo_parsing.py    # демо дня 2
 │   ├── demo_crawl.py      # демо дня 3
 │   ├── demo_politeness.py # демо дня 4
-│   └── demo_retries.py    # демо дня 5
+│   ├── demo_retries.py    # демо дня 5
+│   └── demo_storage.py    # демо дня 6
 ├── tests/
 │   ├── conftest.py        # локальный тестовый HTTP-сервер
 │   ├── test_crawler.py
@@ -90,7 +101,8 @@ ruff check src tests examples
 │   ├── test_robots.py
 │   ├── test_errors.py
 │   ├── test_retry.py
-│   └── test_circuit_breaker.py
+│   ├── test_circuit_breaker.py
+│   └── test_storage.py
 ├── requirements.txt
 ├── pytest.ini
 └── ruff.toml
@@ -155,3 +167,17 @@ ruff check src tests examples
   классифицированные ошибки; публичное поведение прежнее (None при ошибке)
 - статистика: ошибки по типам, число повторов, успешные повторы;
   отчёт об ошибках в `data/error_report.json` (демо)
+
+### День 6 — сохранение данных ✅
+
+- абстрактный `DataStorage` (save / save_many / close, `async with`)
+- `JSONStorage`: JSON Lines построчно (большие объёмы) или форматированный
+  JSON-массив (`pretty=True`); `CSVStorage`: заголовки из первой записи,
+  вложенные структуры как JSON-строки, экранирование через модуль `csv`;
+  `SQLiteStorage`: aiosqlite, batch-вставки `executemany`, `INSERT OR REPLACE`
+  по уникальному URL, индекс по `crawled_at`
+- `CompositeStorage` — запись в несколько хранилищ одновременно
+- единый формат записи: url, title, text, links, metadata, crawled_at,
+  status_code, content_type (`PageData`)
+- интеграция: `AsyncCrawler(storage=...)` сохраняет каждую обработанную
+  страницу; ошибки записи ретраятся и логируются, краул не падает

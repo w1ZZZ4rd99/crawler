@@ -4,11 +4,13 @@ import asyncio
 import contextlib
 import time
 from collections import Counter
+from datetime import UTC, datetime
 from urllib.parse import urlparse
 
 import aiohttp
 from loguru import logger
 
+from src.models import FetchResult
 from src.parsing.html_parser import HTMLParser
 from src.politeness.rate_limiter import RateLimiter
 from src.politeness.robots import RobotsParser
@@ -18,6 +20,7 @@ from src.resilience.retry import RetryStrategy
 from src.scheduling.crawler_queue import CrawlerQueue
 from src.scheduling.semaphores import SemaphoreManager
 from src.scheduling.url_filter import URLFilter, normalize_host
+from src.storage.base import DataStorage
 
 DEFAULT_USER_AGENT = "AsyncCrawler/1.0 (educational project)"
 
@@ -43,6 +46,7 @@ class AsyncCrawler:
         user_agent: str = DEFAULT_USER_AGENT,
         retry_strategy: RetryStrategy | None = None,
         circuit_breaker: CircuitBreaker | None = None,
+        storage: DataStorage | None = None,
     ) -> None:
         self.max_concurrent = max_concurrent
         self.max_depth = max_depth
@@ -55,6 +59,11 @@ class AsyncCrawler:
         self.robots = RobotsParser(self._get_session, user_agent)
         self.retry_strategy = retry_strategy or RetryStrategy()
         self.circuit_breaker = circuit_breaker or CircuitBreaker()
+        self.storage = storage
+        # Short retry chain just for storage writes: they must never kill a crawl.
+        self._storage_retry = RetryStrategy(
+            max_retries=2, base_delay=0.2, jitter=0.0, retry_on=(Exception,)
+        )
         self._timeout = aiohttp.ClientTimeout(
             total=timeout_total, connect=timeout_connect, sock_read=timeout_read
         )
@@ -88,7 +97,7 @@ class AsyncCrawler:
             sock_read=(self._timeout.sock_read or 0) * scale or None,
         )
 
-    async def _request_page(self, url: str, timeout_scale: float = 1.0) -> str:
+    async def _request_page(self, url: str, timeout_scale: float = 1.0) -> FetchResult:
         """Download a page or raise a classified CrawlerError.
 
         Every request first waits for a rate-limiter slot of its domain
@@ -116,6 +125,8 @@ class AsyncCrawler:
                             response.status,
                             retry_after=float(retry_after) if retry_after else None,
                         )
+                    status = response.status
+                    content_type = response.content_type or ""
                     text = await response.text()
         except CrawlerError:
             raise
@@ -123,12 +134,12 @@ class AsyncCrawler:
             raise classify_exception(exc, url) from exc
         elapsed = time.perf_counter() - start
         logger.info("Fetched {} ({} chars in {:.2f}s)", url, len(text), elapsed)
-        return text
+        return FetchResult(url=url, text=text, status=status, content_type=content_type)
 
     async def fetch_url(self, url: str) -> str | None:
         """Download a single page; return its text or None on any error."""
         try:
-            return await self._request_page(url)
+            return (await self._request_page(url)).text
         except CrawlerError as exc:
             logger.warning("{} for {}: {}", exc.__class__.__name__, url, exc)
             return None
@@ -182,14 +193,18 @@ class AsyncCrawler:
             if not self.circuit_breaker.allow(domain):
                 raise CircuitOpenError(f"circuit open for {domain}", url=url)
             async with self.semaphores.limit(domain):
-                html = await self.retry_strategy.execute_with_retry(
+                result = await self.retry_strategy.execute_with_retry(
                     self._request_page,
                     url,
                     # Give the server more time on every retry.
                     on_attempt=lambda n: {"timeout_scale": 1.0 + 0.5 * n},
                 )
             self.circuit_breaker.record_success(domain)
-            return await self.parser.parse_html(html, url)
+            page = await self.parser.parse_html(result.text, url)
+            page["status_code"] = result.status
+            page["content_type"] = result.content_type
+            page["crawled_at"] = datetime.now(UTC).isoformat()
+            return page
 
         async def worker() -> None:
             nonlocal pages_taken
@@ -236,6 +251,8 @@ class AsyncCrawler:
                 if "error" in page:
                     self.error_stats["ParseError"] += 1
                 self.processed_urls[url] = page
+                if self.storage is not None:
+                    await self._save_page(page)
                 if depth < depth_limit:
                     for link in page["links"]:
                         if url_filter.allowed(link):
@@ -287,11 +304,23 @@ class AsyncCrawler:
             logger.info("Errors by type: {}", dict(self.error_stats))
         return dict(self.processed_urls)
 
+    async def _save_page(self, page: dict) -> None:
+        """Persist one page; storage failures are logged but never fatal."""
+        try:
+            await self._storage_retry.execute_with_retry(self.storage.save, page)
+        except Exception as exc:
+            logger.error("Failed to save {}: {}", page.get("url"), repr(exc))
+
     async def close(self) -> None:
-        """Release the HTTP session and its connection pool."""
+        """Release the HTTP session, its connection pool and the storage."""
         if self._session is not None and not self._session.closed:
             await self._session.close()
         self._session = None
+        if self.storage is not None:
+            try:
+                await self.storage.close()
+            except Exception as exc:
+                logger.error("Failed to close storage: {}", repr(exc))
 
     async def __aenter__(self) -> "AsyncCrawler":
         return self
