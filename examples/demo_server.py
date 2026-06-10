@@ -1,7 +1,8 @@
 """Local demo site used by demos and tests.
 
 Layout: / -> /section/{s} -> /section/{s}/item/{i} (depth 2), plus one
-external link on the index page. Standalone: python -m examples.demo_server
+external link and a robots-disallowed /private/ area linked from the index.
+Standalone: python -m examples.demo_server
 """
 
 import asyncio
@@ -17,6 +18,7 @@ PAGE = """<html>
 </body></html>"""
 
 EXTERNAL_LINK = "https://external.invalid/offsite"
+PRIVATE_LINK = "/private/secret"
 
 
 def _render(title: str, links: list[str]) -> str:
@@ -24,14 +26,28 @@ def _render(title: str, links: list[str]) -> str:
     return PAGE.format(title=title, links=anchors)
 
 
-def create_app(sections: int = 3, items: int = 4, delay: float = 0.0) -> web.Application:
+def create_app(
+    sections: int = 3,
+    items: int = 4,
+    delay: float = 0.0,
+    robots_crawl_delay: int | None = None,
+) -> web.Application:
     async def maybe_delay() -> None:
         if delay:
             await asyncio.sleep(delay)
 
+    async def robots_txt(request: web.Request) -> web.Response:
+        lines = ["User-agent: *", "Disallow: /private/"]
+        if robots_crawl_delay is not None:
+            lines.append(f"Crawl-delay: {robots_crawl_delay}")
+        return web.Response(text="\n".join(lines) + "\n")
+
+    async def private_page(request: web.Request) -> web.Response:
+        return web.Response(text=_render("Private page", ["/"]), content_type="text/html")
+
     async def index(request: web.Request) -> web.Response:
         await maybe_delay()
-        links = [f"/section/{s}" for s in range(sections)] + [EXTERNAL_LINK]
+        links = [f"/section/{s}" for s in range(sections)] + [PRIVATE_LINK, EXTERNAL_LINK]
         return web.Response(text=_render("Demo site index", links), content_type="text/html")
 
     async def section(request: web.Request) -> web.Response:
@@ -48,6 +64,8 @@ def create_app(sections: int = 3, items: int = 4, delay: float = 0.0) -> web.App
 
     app = web.Application()
     app.router.add_get("/", index)
+    app.router.add_get("/robots.txt", robots_txt)
+    app.router.add_get("/private/{name}", private_page)
     app.router.add_get("/section/{s}", section)
     app.router.add_get("/section/{s}/item/{i}", item)
     return app

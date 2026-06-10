@@ -8,6 +8,8 @@
 - парсинг HTML: ссылки, текст, метаданные, картинки, заголовки, таблицы, списки (день 2)
 - обход сайта: очередь с приоритетами, ограничение глубины и числа страниц,
   фильтрация URL, прогресс в реальном времени (день 3)
+- правила вежливости: rate limiting по доменам, robots.txt, Crawl-delay,
+  настраиваемый User-Agent (день 4)
 
 ## Установка
 
@@ -30,6 +32,9 @@ python -m examples.demo_parsing
 python -m examples.demo_crawl
 # или обход реального сайта:
 python -m examples.demo_crawl --url https://example.com --max-pages 10
+
+# День 4: rate limiting и соблюдение robots.txt
+python -m examples.demo_politeness
 ```
 
 ## Тесты и линт
@@ -51,22 +56,28 @@ ruff check src tests examples
 │   ├── logging_setup.py   # настройка loguru
 │   ├── parsing/
 │   │   └── html_parser.py # HTMLParser — извлечение данных из HTML
+│   ├── politeness/
+│   │   ├── rate_limiter.py # ограничение частоты запросов
+│   │   └── robots.py       # загрузка и проверка robots.txt
 │   └── scheduling/
 │       ├── crawler_queue.py # очередь URL с приоритетами и дедупликацией
 │       ├── semaphores.py    # глобальный и по-доменный лимиты конкурентности
 │       └── url_filter.py    # фильтрация URL (домен, include/exclude)
 ├── examples/
-│   ├── demo_server.py     # локальный демо-сайт для обхода
+│   ├── demo_server.py     # локальный демо-сайт (robots.txt, /private)
 │   ├── demo_fetch.py      # демо дня 1
 │   ├── demo_parsing.py    # демо дня 2
-│   └── demo_crawl.py      # демо дня 3
+│   ├── demo_crawl.py      # демо дня 3
+│   └── demo_politeness.py # демо дня 4
 ├── tests/
 │   ├── conftest.py        # локальный тестовый HTTP-сервер
 │   ├── test_crawler.py
 │   ├── test_html_parser.py
 │   ├── test_queue.py
 │   ├── test_url_filter.py
-│   └── test_crawl.py
+│   ├── test_crawl.py
+│   ├── test_rate_limiter.py
+│   └── test_robots.py
 ├── requirements.txt
 ├── pytest.ini
 └── ruff.toml
@@ -106,3 +117,14 @@ ruff check src tests examples
   `visited_urls` / `processed_urls` / `failed_urls`
 - прогресс в реальном времени: обработано / в очереди / активно / ошибок / страниц-в-сек
 - локальный демо-сайт (`examples/demo_server.py`) для офлайн-демо и тестов
+
+### День 4 — rate limiting и правила вежливости ✅
+
+- `RateLimiter`: лимит запросов в секунду на домен или глобально,
+  `min_delay`, случайный `jitter`, `penalize()` для штрафных задержек
+- `RobotsParser`: загрузка robots.txt (одна на домен, кэш + lock),
+  `can_fetch`, `get_crawl_delay`; недоступный robots.txt = «всё разрешено»
+- интеграция: лимит применяется перед каждым запросом (`fetch_url`),
+  Crawl-delay из robots.txt усиливает лимит, запрещённые URL пропускаются
+  и учитываются отдельно (`robots_blocked`), настраиваемый User-Agent
+- мониторинг: текущий req/s, средняя задержка, количество блокировок

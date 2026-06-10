@@ -35,6 +35,9 @@ def create_test_app() -> web.Application:
         await asyncio.sleep(float(request.query.get("d", "0.5")))
         return web.Response(text="slow page")
 
+    async def echo_user_agent(request: web.Request) -> web.Response:
+        return web.Response(text=request.headers.get("User-Agent", ""))
+
     async def html_page(request: web.Request) -> web.Response:
         body = (
             "<html><head><title>Test page</title>"
@@ -49,6 +52,7 @@ def create_test_app() -> web.Application:
     app.router.add_get("/ok", ok)
     app.router.add_get("/slow", slow)
     app.router.add_get("/html", html_page)
+    app.router.add_get("/echo-ua", echo_user_agent)
     return app
 
 
