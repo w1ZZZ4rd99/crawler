@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Tests / tools
+.pytest_cache/
+.ruff_cache/
+.coverage
+
+# Crawler artifacts
+data/
+logs/
+*.db
+*.sqlite3
+results.*
+report.html
+
+# IDE
+.idea/
+.vscode/
