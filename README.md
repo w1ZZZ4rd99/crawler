@@ -6,6 +6,8 @@
 
 - параллельная загрузка страниц с ограничением конкурентности (день 1)
 - парсинг HTML: ссылки, текст, метаданные, картинки, заголовки, таблицы, списки (день 2)
+- обход сайта: очередь с приоритетами, ограничение глубины и числа страниц,
+  фильтрация URL, прогресс в реальном времени (день 3)
 
 ## Установка
 
@@ -23,6 +25,11 @@ python -m examples.demo_fetch
 
 # День 2: загрузка и извлечение структурированных данных
 python -m examples.demo_parsing
+
+# День 3: обход локального демо-сайта с прогрессом
+python -m examples.demo_crawl
+# или обход реального сайта:
+python -m examples.demo_crawl --url https://example.com --max-pages 10
 ```
 
 ## Тесты и линт
@@ -42,15 +49,24 @@ ruff check src tests examples
 │   ├── crawler.py         # AsyncCrawler — ядро краулера
 │   ├── models.py          # PageData — модель данных страницы
 │   ├── logging_setup.py   # настройка loguru
-│   └── parsing/
-│       └── html_parser.py # HTMLParser — извлечение данных из HTML
+│   ├── parsing/
+│   │   └── html_parser.py # HTMLParser — извлечение данных из HTML
+│   └── scheduling/
+│       ├── crawler_queue.py # очередь URL с приоритетами и дедупликацией
+│       ├── semaphores.py    # глобальный и по-доменный лимиты конкурентности
+│       └── url_filter.py    # фильтрация URL (домен, include/exclude)
 ├── examples/
+│   ├── demo_server.py     # локальный демо-сайт для обхода
 │   ├── demo_fetch.py      # демо дня 1
-│   └── demo_parsing.py    # демо дня 2
+│   ├── demo_parsing.py    # демо дня 2
+│   └── demo_crawl.py      # демо дня 3
 ├── tests/
 │   ├── conftest.py        # локальный тестовый HTTP-сервер
 │   ├── test_crawler.py
-│   └── test_html_parser.py
+│   ├── test_html_parser.py
+│   ├── test_queue.py
+│   ├── test_url_filter.py
+│   └── test_crawl.py
 ├── requirements.txt
 ├── pytest.ini
 └── ruff.toml
@@ -78,3 +94,15 @@ ruff check src tests examples
 - модель `PageData` (`src/models.py`)
 - `AsyncCrawler.fetch_and_parse(url)` — загрузка + парсинг одним вызовом
 - ошибки парсинга не роняют программу: частичный результат + warning в логе
+
+### День 3 — управление конкурентностью и очередями ✅
+
+- `CrawlerQueue`: приоритетная очередь URL, дедупликация, самозавершение
+  (`get_next()` возвращает `None`, когда очередь пуста и всё обработано)
+- `SemaphoreManager`: глобальный лимит + лимит одновременных запросов к домену
+- `URLFilter`: только тот же домен (`same_domain_only`), include/exclude паттерны
+- `AsyncCrawler.crawl(start_urls, max_pages, max_depth, ...)`: пул воркеров,
+  автодобавление найденных ссылок, контроль глубины, состояние
+  `visited_urls` / `processed_urls` / `failed_urls`
+- прогресс в реальном времени: обработано / в очереди / активно / ошибок / страниц-в-сек
+- локальный демо-сайт (`examples/demo_server.py`) для офлайн-демо и тестов

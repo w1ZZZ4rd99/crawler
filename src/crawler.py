@@ -1,12 +1,17 @@
-"""Core asynchronous HTTP client built on aiohttp."""
+"""Core asynchronous HTTP client and crawling engine built on aiohttp."""
 
 import asyncio
+import contextlib
 import time
+from urllib.parse import urlparse
 
 import aiohttp
 from loguru import logger
 
 from src.parsing.html_parser import HTMLParser
+from src.scheduling.crawler_queue import CrawlerQueue
+from src.scheduling.semaphores import SemaphoreManager
+from src.scheduling.url_filter import URLFilter, normalize_host
 
 
 class AsyncCrawler:
@@ -15,18 +20,28 @@ class AsyncCrawler:
     def __init__(
         self,
         max_concurrent: int = 10,
+        max_depth: int = 2,
+        per_domain_limit: int = 3,
         timeout_total: float = 30.0,
         timeout_connect: float = 10.0,
         timeout_read: float = 10.0,
+        progress_interval: float = 2.0,
         parser: HTMLParser | None = None,
     ) -> None:
         self.max_concurrent = max_concurrent
+        self.max_depth = max_depth
+        self.progress_interval = progress_interval
         self.parser = parser or HTMLParser()
+        self.semaphores = SemaphoreManager(max_concurrent, per_domain_limit)
         self._timeout = aiohttp.ClientTimeout(
             total=timeout_total, connect=timeout_connect, sock_read=timeout_read
         )
         self._semaphore = asyncio.Semaphore(max_concurrent)
         self._session: aiohttp.ClientSession | None = None
+        # Crawl state, reset on every crawl() call.
+        self.visited_urls: set[str] = set()
+        self.processed_urls: dict[str, dict] = {}
+        self.failed_urls: dict[str, str] = {}
 
     async def _get_session(self) -> aiohttp.ClientSession:
         # Lazy init: ClientSession must be created inside a running event loop.
@@ -72,6 +87,100 @@ class AsyncCrawler:
         if html is None:
             return None
         return await self.parser.parse_html(html, url)
+
+    async def crawl(
+        self,
+        start_urls: list[str],
+        max_pages: int = 100,
+        max_depth: int | None = None,
+        same_domain_only: bool = True,
+        include_patterns: list[str] | None = None,
+        exclude_patterns: list[str] | None = None,
+    ) -> dict[str, dict]:
+        """Breadth-style site crawl driven by a priority queue of URLs.
+
+        Discovered links pass the URL filter and are queued with depth + 1
+        until max_pages or max_depth is reached. Returns {url: page_data}.
+        """
+        depth_limit = self.max_depth if max_depth is None else max_depth
+        url_filter = URLFilter.for_start_urls(
+            start_urls, same_domain_only, include_patterns, exclude_patterns
+        )
+        queue = CrawlerQueue()
+        for url in start_urls:
+            queue.add_url(url, depth=0)
+
+        self.visited_urls = set()
+        self.processed_urls = {}
+        self.failed_urls = {}
+        pages_taken = 0
+        started = time.perf_counter()
+
+        async def worker() -> None:
+            nonlocal pages_taken
+            while True:
+                item = await queue.get_next()
+                if item is None:
+                    return
+                url, depth = item
+                if pages_taken >= max_pages:
+                    # Budget exhausted: drain the queue so workers can exit.
+                    queue.mark_processed(url)
+                    continue
+                pages_taken += 1
+                self.visited_urls.add(url)
+                error = "fetch or parse failed"
+                try:
+                    domain = normalize_host(urlparse(url).hostname)
+                    async with self.semaphores.limit(domain):
+                        page = await self.fetch_and_parse(url)
+                except Exception as exc:  # a worker must survive anything
+                    logger.exception("Unexpected error for {}", url)
+                    page = None
+                    error = repr(exc)
+                if page is None:
+                    self.failed_urls[url] = error
+                    queue.mark_failed(url, error)
+                    continue
+                self.processed_urls[url] = page
+                if depth < depth_limit:
+                    for link in page["links"]:
+                        if url_filter.allowed(link):
+                            queue.add_url(link, depth=depth + 1)
+                queue.mark_processed(url)
+
+        async def report_progress() -> None:
+            while True:
+                await asyncio.sleep(self.progress_interval)
+                stats = queue.get_stats()
+                elapsed = time.perf_counter() - started
+                rate = stats["processed"] / elapsed if elapsed > 0 else 0.0
+                logger.info(
+                    "Progress: {} processed, {} queued, {} active, {} failed, {:.1f} pages/s",
+                    stats["processed"],
+                    stats["queued"],
+                    stats["in_progress"],
+                    stats["failed"],
+                    rate,
+                )
+
+        progress_task = asyncio.create_task(report_progress())
+        try:
+            await asyncio.gather(*(worker() for _ in range(self.max_concurrent)))
+        finally:
+            progress_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await progress_task
+
+        elapsed = time.perf_counter() - started
+        logger.info(
+            "Crawl finished: {} processed, {} failed, {} visited in {:.1f}s",
+            len(self.processed_urls),
+            len(self.failed_urls),
+            len(self.visited_urls),
+            elapsed,
+        )
+        return dict(self.processed_urls)
 
     async def close(self) -> None:
         """Release the HTTP session and its connection pool."""
